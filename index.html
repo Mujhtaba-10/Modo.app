@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Modo.app – PDF & Image to Word</title>
+<style>
+:root{--bg:#f6f7fb;--card:#fff;--text:#1b1f2a;--muted:#667085;--line:#e1e4ec;--accent:#2563eb;--ok:#15803d;--err:#b91c1c;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1218;--card:#181c25;--text:#eef0f6;--muted:#9aa3b5;--line:#2a3040;--accent:#5b8cff;--ok:#4ade80;--err:#f87171;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:720px;margin:0 auto;padding:28px 18px 60px}
+h1{font-size:1.7rem;margin:0 0 6px}
+.sub{color:var(--muted);margin:0 0 22px}
+.badge{display:inline-block;font-size:.8rem;color:var(--ok);border:1px solid var(--line);background:var(--card);padding:3px 10px;border-radius:99px;margin-bottom:14px}
+#drop{border:2px dashed var(--line);background:var(--card);border-radius:16px;padding:38px 18px;text-align:center;cursor:pointer}
+#drop.over,#drop:hover{border-color:var(--accent)}
+#drop b{display:block;font-size:1.1rem;margin-bottom:4px}
+#drop span{color:var(--muted);font-size:.92rem}
+.bar{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0;align-items:center}
+button,select{font:inherit;border-radius:10px;padding:11px 16px}
+button{border:0;cursor:pointer;background:var(--accent);color:#fff;font-weight:600}
+button.sec,select{background:var(--card);color:var(--text);border:1px solid var(--line)}
+button:disabled{opacity:.45;cursor:not-allowed}
+label{color:var(--muted);font-size:.9rem;display:flex;gap:8px;align-items:center;margin-left:auto}
+ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+li{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.name{flex:1;min-width:140px;overflow-wrap:anywhere}
+.name small{display:block;color:var(--muted)}
+.st{font-size:.88rem;color:var(--muted)}
+.st.ok{color:var(--ok)}.st.err{color:var(--err)}.st.run{color:var(--accent)}
+li a{font-size:.88rem;color:var(--accent);font-weight:600;text-decoration:none}
+.prog{height:6px;background:var(--line);border-radius:9px;overflow:hidden;margin:8px 0;display:none}
+.prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+footer{margin-top:28px;color:var(--muted);font-size:.85rem}
+</style>
+</head>
+<body>
+<main>
+  <span class="badge">🔒 Files never leave your device</span>
+  <h1>Modo.app</h1>
+  <p class="sub">PDF & Image to Word, free and unlimited. Scans and photos are read with built-in OCR.</p>
+
+  <div id="drop" tabindex="0">
+    <b>Drop PDFs or images here</b>
+    <span>PDF, JPG, PNG, WebP · or tap to choose files</span>
+    <input id="pick" type="file" accept="application/pdf,.pdf,image/*" multiple hidden>
+  </div>
+
+  <div class="bar">
+    <button id="go" disabled>Convert all</button>
+    <button id="zip" class="sec" disabled>Download all (.zip)</button>
+    <button id="clr" class="sec" disabled>Clear</button>
+    <label>OCR language
+      <select id="lang">
+        <option value="eng">English</option>
+        <option value="urd">Urdu</option>
+        <option value="ara">Arabic</option>
+        <option value="eng+urd">English + Urdu</option>
+        <option value="fra">French</option>
+        <option value="deu">German</option>
+        <option value="spa">Spanish</option>
+      </select>
+    </label>
+  </div>
+  <div class="prog" id="prog"><i></i></div>
+  <ul id="list"></ul>
+
+  <footer>OCR language data downloads once (a few MB) the first time it’s needed, then is cached. Complex tables and multi-column layouts may need small touch-ups.<br><br><strong>Mujhtaba Modo</strong></footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.js"></script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const {Document,Packer,Paragraph,TextRun}=docx;
+const $=id=>document.getElementById(id);
+let jobs=[],busy=false;
+
+/* ---------- OCR ---------- */
+let worker=null,wLang=null;
+async function getWorker(lang,status){
+  if(worker&&wLang===lang)return worker;
+  if(worker){await worker.terminate();worker=null;}
+  worker=await Tesseract.createWorker(lang,1,{logger:m=>{if(m.status&&status)status(m.status.includes('loading')||m.status.includes('initializ')?'Preparing OCR (first run downloads language data)…':'Reading text…');}});
+  wLang=lang;return worker;
+}
+async function ocrCanvas(cv,status){
+  const w=await getWorker($('lang').value,status);
+  const {data}=await w.recognize(cv);
+  return data.text.split(/\n\s*\n/).map(t=>t.replace(/\s*\n\s*/g,' ').trim()).filter(Boolean);
+}
+const ocrLines=(page,paras)=>paras.map((t,i)=>({page,y:1e6-i*1000,size:11,text:t,ocr:true}));
+
+/* ---------- build Word file from extracted lines ---------- */
+function buildDoc(all){
+  if(!all.length)throw new Error('No text found in this file.');
+  const sizes=all.map(l=>l.size).sort((a,b)=>a-b),body=sizes[sizes.length>>1];
+  const out=[];let cur=null,prev=null,pbb=false;
+  const flush=()=>{if(!cur)return;out.push(new Paragraph({pageBreakBefore:cur.pb,spacing:{after:cur.head?160:100},children:[new TextRun({text:cur.text,size:Math.round(Math.min(Math.max(cur.size,8),30)*2),bold:cur.head})]}));cur=null;};
+  for(const l of all){
+    if(prev&&l.page!==prev.page){flush();pbb=true;}
+    const head=!l.ocr&&l.size>body*1.15,bullet=/^([•▪●◦\-–*]|\d+[.)])\s/.test(l.text);
+    const merge=cur&&!head&&!cur.head&&!bullet&&l.page===prev.page&&prev.y-l.y<l.size*1.7&&Math.abs(l.size-prev.size)<1;
+    if(merge){cur.text=cur.text.endsWith('-')?cur.text.slice(0,-1)+l.text:cur.text+' '+l.text;}
+    else{flush();cur={text:l.text,size:l.size,head,pb:pbb};pbb=false;}
+    prev=l;
+  }
+  flush();
+  return Packer.toBlob(new Document({sections:[{children:out}]}));
+}
+
+/* ---------- converter registry: add new formats by registering a function ---------- */
+const converters={
+  'pdf>docx':async(file,status)=>{
+    const pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise;
+    const all=[];
+    for(let p=1;p<=pdf.numPages;p++){
+      status(`Page ${p}/${pdf.numPages}`,(p-1)/pdf.numPages);
+      const page=await pdf.getPage(p);
+      const tc=await page.getTextContent();
+      const its=tc.items.filter(i=>i.str&&i.str.trim()).map(i=>({s:i.str,x:i.transform[4],y:i.transform[5],w:i.width,h:Math.hypot(i.transform[0],i.transform[1])||i.height}));
+      if(!its.length){ // scanned page → OCR
+        const vp=page.getViewport({scale:2.5}),cv=document.createElement('canvas');
+        cv.width=vp.width;cv.height=vp.height;
+        await page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
+        all.push(...ocrLines(p,await ocrCanvas(cv,m=>status(`Page ${p}/${pdf.numPages} · ${m}`))));
+        continue;
+      }
+      its.sort((a,b)=>b.y-a.y||a.x-b.x);
+      const lines=[];
+      for(const it of its){const l=lines[lines.length-1];if(l&&Math.abs(l.y-it.y)<Math.max(2,it.h*.4))l.items.push(it);else lines.push({y:it.y,items:[it]});}
+      for(const l of lines){
+        l.items.sort((a,b)=>a.x-b.x);
+        let t='',end=null;
+        for(const it of l.items){
+          if(end!==null){const g=it.x-end;if(g>it.h*2)t+='    ';else if(g>it.h*.15&&!t.endsWith(' ')&&!it.s.startsWith(' '))t+=' ';}
+          t+=it.s;end=it.x+it.w;
+        }
+        all.push({page:p,y:l.y,size:Math.max(...l.items.map(i=>i.h)),text:t.trim()});
+      }
+    }
+    return buildDoc(all);
+  },
+  'image>docx':async(file,status)=>{
+    const bmp=await createImageBitmap(file),cv=document.createElement('canvas');
+    cv.width=bmp.width;cv.height=bmp.height;cv.getContext('2d').drawImage(bmp,0,0);
+    return buildDoc(ocrLines(1,await ocrCanvas(cv,m=>status(m))));
+  }
+};
+const kindOf=f=>/\.pdf$/i.test(f.name)||f.type==='application/pdf'?'pdf':/^image\//.test(f.type)||/\.(jpe?g|png|webp|bmp)$/i.test(f.name)?'image':null;
+
+/* ---------- UI ---------- */
+const kb=n=>n>1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';
+const baseName=n=>n.replace(/\.[^.]+$/,'');
+function add(files){
+  for(const f of files){const k=kindOf(f);if(k)jobs.push({file:f,kind:k,state:'queued',msg:'Ready',blob:null,url:null});}
+  render();
+}
+function render(){
+  const ul=$('list');ul.innerHTML='';
+  for(const j of jobs){
+    const li=document.createElement('li');
+    const n=document.createElement('div');n.className='name';n.textContent=j.file.name;
+    const s=document.createElement('small');s.textContent=kb(j.file.size);n.appendChild(s);
+    const st=document.createElement('span');st.className='st '+(j.state==='done'?'ok':j.state==='error'?'err':j.state==='run'?'run':'');st.textContent=j.msg;
+    li.append(n,st);
+    if(j.url){const a=document.createElement('a');a.href=j.url;a.download=baseName(j.file.name)+'.docx';a.textContent='Download';li.appendChild(a);}
+    ul.appendChild(li);
+  }
+  const done=jobs.filter(j=>j.blob).length;
+  $('go').disabled=busy||!jobs.some(j=>j.state==='queued'||j.state==='error');
+  $('zip').disabled=busy||!done;
+  $('zip').textContent=done===1?'Download Word file':'Download all (.zip)';
+  $('clr').disabled=busy||!jobs.length;
+  $('lang').disabled=busy;
+}
+async function run(){
+  busy=true;const prog=$('prog');prog.style.display='block';
+  const todo=jobs.filter(j=>j.state==='queued'||j.state==='error');
+  for(let k=0;k<todo.length;k++){
+    const j=todo[k];j.state='run';j.msg='Converting…';render();
+    try{
+      j.blob=await converters[j.kind+'>docx'](j.file,(msg,f)=>{j.msg=msg;if(f!==undefined)prog.firstElementChild.style.width=((k+f)/todo.length*100)+'%';render();});
+      j.url=URL.createObjectURL(j.blob);j.state='done';j.msg='Done ✓';
+    }catch(e){j.state='error';j.msg=(e&&e.message)||'Conversion failed';}
+    render();
+  }
+  prog.firstElementChild.style.width='100%';setTimeout(()=>prog.style.display='none',600);
+  busy=false;render();
+}
+function save(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);}
+async function downloadAll(){
+  const ok=jobs.filter(j=>j.blob);
+  if(ok.length===1)return save(ok[0].blob,baseName(ok[0].file.name)+'.docx');
+  const z=new JSZip(),used={};
+  for(const j of ok){const b=baseName(j.file.name);used[b]=(used[b]||0)+1;z.file((used[b]>1?`${b} (${used[b]})`:b)+'.docx',j.blob);}
+  save(await z.generateAsync({type:'blob'}),'converted-word-files.zip');
+}
+const drop=$('drop'),pick=$('pick');
+drop.onclick=()=>pick.click();
+drop.onkeydown=e=>{if(e.key==='Enter'||e.key===' ')pick.click();};
+pick.onchange=()=>{add([...pick.files]);pick.value='';};
+['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('over');}));
+drop.addEventListener('drop',e=>add([...e.dataTransfer.files]));
+$('go').onclick=run;$('zip').onclick=downloadAll;
+$('clr').onclick=()=>{jobs.forEach(j=>j.url&&URL.revokeObjectURL(j.url));jobs=[];render();};
+render();
+</script>
+</body>
+</html>
