@@ -13,7 +13,8 @@ main{max-width:720px;margin:0 auto;padding:28px 18px 60px}
 h1{font-size:1.7rem;margin:0 0 6px}
 .sub{color:var(--muted);margin:0 0 22px}
 .badge{display:inline-block;font-size:.8rem;color:var(--ok);border:1px solid var(--line);background:var(--card);padding:3px 10px;border-radius:99px;margin-bottom:14px}
-#drop{border:2px dashed var(--line);background:var(--card);border-radius:16px;padding:38px 18px;text-align:center;cursor:pointer}
+#drop{border:2px dashed var(--line);background:var(--card);border-radius:16px;padding:38px 18px;text-align:center;cursor:pointer;position:relative}
+#pick{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:0}
 #drop.over,#drop:hover{border-color:var(--accent)}
 #drop b{display:block;font-size:1.1rem;margin-bottom:4px}
 #drop span{color:var(--muted);font-size:.92rem}
@@ -44,8 +45,10 @@ footer{margin-top:28px;color:var(--muted);font-size:.85rem}
   <div id="drop" tabindex="0">
     <b>Drop PDFs or images here</b>
     <span>PDF, JPG, PNG, WebP · or tap to choose files</span>
-    <input id="pick" type="file" accept="application/pdf,.pdf,image/*" multiple hidden>
+    <input id="pick" type="file" accept="application/pdf,.pdf,image/*" multiple>
   </div>
+
+  <p id="warn" class="st err" style="display:none;margin:12px 0 0"></p>
 
   <div class="bar">
     <button id="go" disabled>Convert all</button>
@@ -72,10 +75,23 @@ footer{margin-top:28px;color:var(--muted);font-size:.85rem}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.js"></script>
 <script>
-pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-const {Document,Packer,Paragraph,TextRun}=docx;
+if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+/* ---------- minimal .docx writer (a .docx is just zipped XML) ---------- */
+const esc=s=>s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const rtlRe=/[\u0590-\u08FF]/;
+function para(p){
+  const rtl=rtlRe.test(p.text),sz=Math.round(Math.min(Math.max(p.size,8),30)*2);
+  return '<w:p><w:pPr>'+(p.pb?'<w:pageBreakBefore/>':'')+(rtl?'<w:bidi/>':'')+'<w:spacing w:after="'+(p.head?160:100)+'"/></w:pPr><w:r><w:rPr>'+(p.head?'<w:b/>':'')+'<w:sz w:val="'+sz+'"/><w:szCs w:val="'+sz+'"/>'+(rtl?'<w:rtl/>':'')+'</w:rPr><w:t xml:space="preserve">'+esc(p.text)+'</w:t></w:r></w:p>';
+}
+function packDocx(paras){
+  const H='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  const z=new JSZip();
+  z.file('[Content_Types].xml',H+'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+  z.file('_rels/.rels',H+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+  z.file('word/document.xml',H+'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+paras.join('')+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>');
+  return z.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',compression:'DEFLATE'});
+}
 const $=id=>document.getElementById(id);
 let jobs=[],busy=false;
 
@@ -99,7 +115,7 @@ function buildDoc(all){
   if(!all.length)throw new Error('No text found in this file.');
   const sizes=all.map(l=>l.size).sort((a,b)=>a-b),body=sizes[sizes.length>>1];
   const out=[];let cur=null,prev=null,pbb=false;
-  const flush=()=>{if(!cur)return;out.push(new Paragraph({pageBreakBefore:cur.pb,spacing:{after:cur.head?160:100},children:[new TextRun({text:cur.text,size:Math.round(Math.min(Math.max(cur.size,8),30)*2),bold:cur.head})]}));cur=null;};
+  const flush=()=>{if(!cur)return;out.push(para(cur));cur=null;};
   for(const l of all){
     if(prev&&l.page!==prev.page){flush();pbb=true;}
     const head=!l.ocr&&l.size>body*1.15,bullet=/^([•▪●◦\-–*]|\d+[.)])\s/.test(l.text);
@@ -109,7 +125,7 @@ function buildDoc(all){
     prev=l;
   }
   flush();
-  return Packer.toBlob(new Document({sections:[{children:out}]}));
+  return packDocx(out);
 }
 
 /* ---------- converter registry: add new formats by registering a function ---------- */
@@ -200,8 +216,6 @@ async function downloadAll(){
   save(await z.generateAsync({type:'blob'}),'converted-word-files.zip');
 }
 const drop=$('drop'),pick=$('pick');
-drop.onclick=()=>pick.click();
-drop.onkeydown=e=>{if(e.key==='Enter'||e.key===' ')pick.click();};
 pick.onchange=()=>{add([...pick.files]);pick.value='';};
 ['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('over');}));
 ['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('over');}));
@@ -209,6 +223,12 @@ drop.addEventListener('drop',e=>add([...e.dataTransfer.files]));
 $('go').onclick=run;$('zip').onclick=downloadAll;
 $('clr').onclick=()=>{jobs.forEach(j=>j.url&&URL.revokeObjectURL(j.url));jobs=[];render();};
 render();
+window.addEventListener('load',()=>{
+  const miss=[];
+  if(!window.pdfjsLib)miss.push('PDF reader (pdf.js)');
+  if(!window.JSZip)miss.push('zip maker (JSZip)');
+  if(miss.length){const w=$('warn');w.style.display='block';w.textContent='Couldn’t load: '+miss.join(', ')+'. Check your internet connection and reload the page.';}
+});
 </script>
 </body>
 </html>
