@@ -3,17 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Modo.app – PDF & Image to Word</title>
+<title>Modo.app – File Converter</title>
 <style>
 :root{--bg:#f6f7fb;--card:#fff;--text:#1b1f2a;--muted:#667085;--line:#e1e4ec;--accent:#2563eb;--ok:#15803d;--err:#b91c1c;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1218;--card:#181c25;--text:#eef0f6;--muted:#9aa3b5;--line:#2a3040;--accent:#5b8cff;--ok:#4ade80;--err:#f87171;color-scheme:dark}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-main{max-width:720px;margin:0 auto;padding:28px 18px 60px}
+main{max-width:760px;margin:0 auto;padding:28px 18px 60px}
 h1{font-size:1.7rem;margin:0 0 6px}
-.sub{color:var(--muted);margin:0 0 22px}
+.sub{color:var(--muted);margin:0 0 20px}
 .badge{display:inline-block;font-size:.8rem;color:var(--ok);border:1px solid var(--line);background:var(--card);padding:3px 10px;border-radius:99px;margin-bottom:14px}
-#drop{border:2px dashed var(--line);background:var(--card);border-radius:16px;padding:38px 18px;text-align:center;cursor:pointer;position:relative}
+.tools{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:16px}
+.tools button{background:var(--card);color:var(--text);border:1px solid var(--line);padding:12px 10px;text-align:center;line-height:1.25}
+.tools button small{display:block;font-weight:400;color:var(--muted);font-size:.78rem;margin-top:2px}
+.tools button.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent) inset}
+#drop{border:2px dashed var(--line);background:var(--card);border-radius:16px;padding:34px 18px;text-align:center;cursor:pointer;position:relative}
 #pick{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:0}
 #drop.over,#drop:hover{border-color:var(--accent)}
 #drop b{display:block;font-size:1.1rem;margin-bottom:4px}
@@ -33,6 +37,7 @@ li{background:var(--card);border:1px solid var(--line);border-radius:12px;paddin
 li a{font-size:.88rem;color:var(--accent);font-weight:600;text-decoration:none}
 .prog{height:6px;background:var(--line);border-radius:9px;overflow:hidden;margin:8px 0;display:none}
 .prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+.note{color:var(--muted);font-size:.85rem;margin:10px 0 0}
 footer{margin-top:28px;color:var(--muted);font-size:.85rem}
 </style>
 </head>
@@ -40,21 +45,23 @@ footer{margin-top:28px;color:var(--muted);font-size:.85rem}
 <main>
   <span class="badge">🔒 Files never leave your device</span>
   <h1>Modo.app</h1>
-  <p class="sub">PDF & Image to Word, free and unlimited. Scans and photos are read with built-in OCR.</p>
+  <p class="sub">Free, unlimited file converter. Pick a conversion, then add your files.</p>
+
+  <div class="tools" id="tools"></div>
 
   <div id="drop" tabindex="0">
-    <b>Drop PDFs or images here</b>
-    <span>PDF, JPG, PNG, WebP · or tap to choose files</span>
-    <input id="pick" type="file" accept="application/pdf,.pdf,image/*" multiple>
+    <b id="dtitle">Drop files here</b>
+    <span id="dsub">or tap to choose files</span>
+    <input id="pick" type="file" multiple>
   </div>
-
   <p id="warn" class="st err" style="display:none;margin:12px 0 0"></p>
+  <p id="note" class="note"></p>
 
   <div class="bar">
     <button id="go" disabled>Convert all</button>
     <button id="zip" class="sec" disabled>Download all (.zip)</button>
     <button id="clr" class="sec" disabled>Clear</button>
-    <label>OCR language
+    <label id="langwrap">OCR language
       <select id="lang">
         <option value="eng">English</option>
         <option value="urd">Urdu</option>
@@ -69,31 +76,97 @@ footer{margin-top:28px;color:var(--muted);font-size:.85rem}
   <div class="prog" id="prog"><i></i></div>
   <ul id="list"></ul>
 
-  <footer>OCR language data downloads once (a few MB) the first time it’s needed, then is cached. Complex tables and multi-column layouts may need small touch-ups.<br><br><strong>Mujhtaba Modo</strong></footer>
+  <footer>Tables are detected from text layout, so complex or borderless tables may need touch-ups. OCR data downloads once (a few MB) the first time it’s needed, then is cached.<br><br><strong>Mujhtaba Modo</strong></footer>
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
 <script>
 if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-/* ---------- minimal .docx writer (a .docx is just zipped XML) ---------- */
-const esc=s=>s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+/*@@CORE*/
+/* ---------- .docx writer (a .docx is just zipped XML) ---------- */
+const esc=s=>String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const rtlRe=/[\u0590-\u08FF]/;
 function para(p){
-  const rtl=rtlRe.test(p.text),sz=Math.round(Math.min(Math.max(p.size,8),30)*2);
-  return '<w:p><w:pPr>'+(p.pb?'<w:pageBreakBefore/>':'')+(rtl?'<w:bidi/>':'')+'<w:spacing w:after="'+(p.head?160:100)+'"/></w:pPr><w:r><w:rPr>'+(p.head?'<w:b/>':'')+'<w:sz w:val="'+sz+'"/><w:szCs w:val="'+sz+'"/>'+(rtl?'<w:rtl/>':'')+'</w:rPr><w:t xml:space="preserve">'+esc(p.text)+'</w:t></w:r></w:p>';
+  const rtl=rtlRe.test(p.text),sz=Math.round(Math.min(Math.max(p.size,6),30)*2);
+  return '<w:p><w:pPr>'+(p.pb?'<w:pageBreakBefore/>':'')+(rtl?'<w:bidi/>':'')+'<w:spacing w:after="'+(p.head?160:100)+'"/></w:pPr><w:r><w:rPr>'+(p.head?'<w:b/>':'')+'<w:sz w:val="'+sz+'"/><w:szCs w:val="'+sz+'"/>'+(rtl?'<w:rtl/>':'')+'</w:rPr><w:t xml:space="preserve">'+esc(p.text).replace(/\n/g,'</w:t><w:br/><w:t xml:space="preserve">')+'</w:t></w:r></w:p>';
 }
-function packDocx(paras){
+function tbl(rows){
+  const n=Math.max(...rows.map(r=>r.length)),w=Math.floor(9638/n),sz=n>8?8:10;
+  const bd=k=>'<w:'+k+' w:val="single" w:sz="4" w:space="0" w:color="808080"/>';
+  return '<w:tbl><w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:tblBorders>'+['top','left','bottom','right','insideH','insideV'].map(bd).join('')+'</w:tblBorders><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>'+('<w:gridCol w:w="'+w+'"/>').repeat(n)+'</w:tblGrid>'+rows.map(r=>'<w:tr>'+Array.from({length:n},(_,i)=>'<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/></w:tcPr>'+para({text:r[i]||'',size:sz,head:false})+'</w:tc>').join('')+'</w:tr>').join('')+'</w:tbl>';
+}
+function packDocx(blocks){
   const H='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
-  const z=new JSZip();
+  const z=new JSZip(),last=blocks[blocks.length-1]||'';
   z.file('[Content_Types].xml',H+'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
   z.file('_rels/.rels',H+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
-  z.file('word/document.xml',H+'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+paras.join('')+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>');
+  z.file('word/document.xml',H+'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+blocks.join('')+(last.startsWith('<w:tbl')?'<w:p/>':'')+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>');
   return z.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',compression:'DEFLATE'});
 }
+
+/* ---------- PDF page → paragraphs and tables ---------- */
+function makeRows(ls){
+  const xs=ls.flatMap(l=>l.segs.map(s=>s.x)).sort((a,b)=>a-b),anc=[];
+  for(const x of xs)if(!anc.length||x-anc[anc.length-1]>10)anc.push(x);
+  let rows=ls.map(l=>{const r=Array(anc.length).fill('');for(const s of l.segs){let c=0;for(let k=0;k<anc.length;k++)if(anc[k]<=s.x+10)c=k;r[c]=(r[c]?r[c]+' ':'')+s.text;}return r;});
+  const keep=anc.map((_,k)=>rows.some(r=>r[k]));
+  return rows.map(r=>r.filter((_,k)=>keep[k]));
+}
+function pageToBlocks(its,p){
+  its.sort((a,b)=>b.y-a.y||a.x-b.x);
+  const raw=[];
+  for(const it of its){const l=raw[raw.length-1];if(l&&Math.abs(l.y-it.y)<Math.max(2,it.h*.4))l.items.push(it);else raw.push({y:it.y,items:[it]});}
+  const lines=raw.map(l=>{
+    l.items.sort((a,b)=>a.x-b.x);
+    const segs=[];let end=null,cur=null;
+    for(const it of l.items){
+      if(end===null||it.x-end>it.h*1.5){cur={x:it.x,text:it.s};segs.push(cur);}
+      else{if(it.x-end>it.h*.15&&!cur.text.endsWith(' ')&&!it.s.startsWith(' '))cur.text+=' ';cur.text+=it.s;}
+      end=it.x+it.w;
+    }
+    if(segs.length>1&&/^([•▪●◦\-–*]|\d+[.)])$/.test(segs[0].text.trim())){segs[1].text=segs[0].text.trim()+' '+segs[1].text;segs.shift();}
+    segs.forEach(s=>s.text=s.text.trim());
+    return {y:l.y,size:Math.max(...l.items.map(i=>i.h)),segs};
+  });
+  const out=[];let i=0;
+  while(i<lines.length){
+    let j=i;while(j<lines.length&&lines[j].segs.length>1)j++;
+    if(j-i>=2){const rows=makeRows(lines.slice(i,j));if(rows[0].length>1){out.push({page:p,y:lines[i].y,size:11,table:rows});i=j;continue;}}
+    const l=lines[i];out.push({page:p,y:l.y,size:l.size,text:l.segs.map(s=>s.text).join('    ')});i++;
+  }
+  return out;
+}
+async function buildDoc(all){
+  if(!all.length)throw new Error('No text found in this file.');
+  const sizes=all.filter(l=>!l.table).map(l=>l.size).sort((a,b)=>a-b),body=sizes[sizes.length>>1]||11;
+  const out=[];let cur=null,prev=null,pbb=false;
+  const flush=()=>{if(!cur)return;out.push(para(cur));cur=null;};
+  for(const l of all){
+    if(prev&&l.page!==prev.page){flush();pbb=true;}
+    if(l.table){flush();if(pbb){out.push('<w:p><w:pPr><w:pageBreakBefore/></w:pPr></w:p>');pbb=false;}out.push(tbl(l.table));prev=l;continue;}
+    const head=!l.ocr&&l.size>body*1.15,bullet=/^([•▪●◦\-–*]|\d+[.)])\s/.test(l.text);
+    const merge=cur&&!head&&!cur.head&&!bullet&&l.page===prev.page&&prev.y-l.y<l.size*1.7&&Math.abs(l.size-prev.size)<1;
+    if(merge){cur.text=cur.text.endsWith('-')?cur.text.slice(0,-1)+l.text:cur.text+' '+l.text;}
+    else{flush();cur={text:l.text,size:l.size,head,pb:pbb};pbb=false;}
+    prev=l;
+  }
+  flush();
+  return {blob:await packDocx(out),ext:'.docx'};
+}
+/*@@ENDCORE*/
+
 const $=id=>document.getElementById(id);
-let jobs=[],busy=false;
+const baseName=n=>n.replace(/\.[^.]+$/,'');
+const canvasBlob=(cv,type,q)=>new Promise(r=>cv.toBlob(r,type,q));
+const newCanvas=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c;};
+async function packImgs(blobs,ext,base){
+  if(blobs.length===1)return {blob:blobs[0],ext:'.'+ext};
+  const z=new JSZip();blobs.forEach((b,i)=>z.file(base+'-page-'+(i+1)+'.'+ext,b));
+  return {blob:await z.generateAsync({type:'blob'}),ext:'.zip'};
+}
 
 /* ---------- OCR ---------- */
 let worker=null,wLang=null;
@@ -110,69 +183,152 @@ async function ocrCanvas(cv,status){
 }
 const ocrLines=(page,paras)=>paras.map((t,i)=>({page,y:1e6-i*1000,size:11,text:t,ocr:true}));
 
-/* ---------- build Word file from extracted lines ---------- */
-function buildDoc(all){
-  if(!all.length)throw new Error('No text found in this file.');
-  const sizes=all.map(l=>l.size).sort((a,b)=>a-b),body=sizes[sizes.length>>1];
-  const out=[];let cur=null,prev=null,pbb=false;
-  const flush=()=>{if(!cur)return;out.push(para(cur));cur=null;};
-  for(const l of all){
-    if(prev&&l.page!==prev.page){flush();pbb=true;}
-    const head=!l.ocr&&l.size>body*1.15,bullet=/^([•▪●◦\-–*]|\d+[.)])\s/.test(l.text);
-    const merge=cur&&!head&&!cur.head&&!bullet&&l.page===prev.page&&prev.y-l.y<l.size*1.7&&Math.abs(l.size-prev.size)<1;
-    if(merge){cur.text=cur.text.endsWith('-')?cur.text.slice(0,-1)+l.text:cur.text+' '+l.text;}
-    else{flush();cur={text:l.text,size:l.size,head,pb:pbb};pbb=false;}
-    prev=l;
+/* ---------- reading Word files ---------- */
+const WNS='http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+async function readDocx(file){
+  const z=await JSZip.loadAsync(await file.arrayBuffer()),f=z.file('word/document.xml');
+  if(!f)throw new Error('Not a .docx file. Old .doc files aren’t supported: open in Word and Save As .docx first.');
+  const doc=new DOMParser().parseFromString(await f.async('string'),'application/xml');
+  const q=(n,t)=>n.getElementsByTagNameNS(WNS,t),at=(n,a)=>n.getAttributeNS(WNS,a);
+  const ptext=p=>{let s='';const walk=n=>{for(const c of n.childNodes){if(c.nodeType!==1)continue;const t=c.localName;
+    if(t==='t')s+=c.textContent;else if(t==='tab')s+='\t';else if(t==='cr')s+='\n';
+    else if(t==='br')s+=at(c,'type')==='page'?'\f':'\n';else if(t!=='pPr'&&t!=='rPr')walk(c);}};walk(p);return s;};
+  const blocks=[];
+  for(const n of q(doc,'body')[0].childNodes){
+    if(n.localName==='p'){
+      const r=q(n,'r')[0],rp=r&&q(r,'rPr')[0],sz=rp&&q(rp,'sz')[0],bo=rp&&q(rp,'b')[0],st=q(n,'pStyle')[0];
+      const head=/^(heading|title)/i.test(st?at(st,'val'):''),text=ptext(n);
+      blocks.push({type:'p',text,size:sz?(+at(sz,'val'))/2:(head?16:11),bold:head||!!(bo&&at(bo,'val')!=='0'&&at(bo,'val')!=='false'),rtl:!!q(n,'bidi')[0]||rtlRe.test(text),pb:!!q(n,'pageBreakBefore')[0]});
+    }else if(n.localName==='tbl'){
+      const rows=[];
+      for(const tr of n.childNodes){if(tr.localName!=='tr')continue;const row=[];
+        for(const tc of tr.childNodes){if(tc.localName!=='tc')continue;row.push(Array.from(q(tc,'p')).map(ptext).join('\n').replace(/\f/g,'').trim());}
+        rows.push(row);}
+      blocks.push({type:'tbl',rows});
+    }
   }
-  flush();
-  return packDocx(out);
+  return blocks;
 }
 
-/* ---------- converter registry: add new formats by registering a function ---------- */
-const converters={
-  'pdf>docx':async(file,status)=>{
-    const pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise;
-    const all=[];
-    for(let p=1;p<=pdf.numPages;p++){
-      status(`Page ${p}/${pdf.numPages}`,(p-1)/pdf.numPages);
-      const page=await pdf.getPage(p);
-      const tc=await page.getTextContent();
-      const its=tc.items.filter(i=>i.str&&i.str.trim()).map(i=>({s:i.str,x:i.transform[4],y:i.transform[5],w:i.width,h:Math.hypot(i.transform[0],i.transform[1])||i.height}));
-      if(!its.length){ // scanned page → OCR
-        const vp=page.getViewport({scale:2.5}),cv=document.createElement('canvas');
-        cv.width=vp.width;cv.height=vp.height;
-        await page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
-        all.push(...ocrLines(p,await ocrCanvas(cv,m=>status(`Page ${p}/${pdf.numPages} · ${m}`))));
-        continue;
-      }
-      its.sort((a,b)=>b.y-a.y||a.x-b.x);
-      const lines=[];
-      for(const it of its){const l=lines[lines.length-1];if(l&&Math.abs(l.y-it.y)<Math.max(2,it.h*.4))l.items.push(it);else lines.push({y:it.y,items:[it]});}
-      for(const l of lines){
-        l.items.sort((a,b)=>a.x-b.x);
-        let t='',end=null;
-        for(const it of l.items){
-          if(end!==null){const g=it.x-end;if(g>it.h*2)t+='    ';else if(g>it.h*.15&&!t.endsWith(' ')&&!it.s.startsWith(' '))t+=' ';}
-          t+=it.s;end=it.x+it.w;
-        }
-        all.push({page:p,y:l.y,size:Math.max(...l.items.map(i=>i.h)),text:t.trim()});
-      }
-    }
-    return buildDoc(all);
-  },
-  'image>docx':async(file,status)=>{
-    const bmp=await createImageBitmap(file),cv=document.createElement('canvas');
-    cv.width=bmp.width;cv.height=bmp.height;cv.getContext('2d').drawImage(bmp,0,0);
-    return buildDoc(ocrLines(1,await ocrCanvas(cv,m=>status(m))));
+/* ---------- the six converters ---------- */
+async function pdf2word(file,status){
+  const pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise,all=[];
+  for(let p=1;p<=pdf.numPages;p++){
+    status(`Page ${p}/${pdf.numPages}`,(p-1)/pdf.numPages);
+    const page=await pdf.getPage(p),tc=await page.getTextContent();
+    const its=tc.items.filter(i=>i.str&&i.str.trim()).map(i=>({s:i.str,x:i.transform[4],y:i.transform[5],w:i.width,h:Math.hypot(i.transform[0],i.transform[1])||i.height}));
+    if(its.length){all.push(...pageToBlocks(its,p));continue;}
+    const vp=page.getViewport({scale:2.5}),cv=newCanvas(vp.width,vp.height),cx=cv.getContext('2d');
+    cx.fillStyle='#fff';cx.fillRect(0,0,cv.width,cv.height);
+    await page.render({canvasContext:cx,viewport:vp}).promise;
+    all.push(...ocrLines(p,await ocrCanvas(cv,m=>status(`Page ${p}/${pdf.numPages} · ${m}`))));
   }
-};
-const kindOf=f=>/\.pdf$/i.test(f.name)||f.type==='application/pdf'?'pdf':/^image\//.test(f.type)||/\.(jpe?g|png|webp|bmp)$/i.test(f.name)?'image':null;
+  return buildDoc(all);
+}
+async function img2word(file,status){
+  const bmp=await createImageBitmap(file),cv=newCanvas(bmp.width,bmp.height);
+  cv.getContext('2d').drawImage(bmp,0,0);
+  return buildDoc(ocrLines(1,await ocrCanvas(cv,m=>status(m))));
+}
+async function pdf2png(file,status){
+  const pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise,imgs=[];
+  for(let p=1;p<=pdf.numPages;p++){
+    status(`Page ${p}/${pdf.numPages}`,(p-1)/pdf.numPages);
+    const page=await pdf.getPage(p),vp=page.getViewport({scale:2}),cv=newCanvas(vp.width,vp.height),cx=cv.getContext('2d');
+    cx.fillStyle='#fff';cx.fillRect(0,0,cv.width,cv.height);
+    await page.render({canvasContext:cx,viewport:vp}).promise;
+    imgs.push(await canvasBlob(cv,'image/png'));
+  }
+  return packImgs(imgs,'png',baseName(file.name));
+}
+const toVal=c=>/^-?\d+(\.\d+)?$/.test(c)?Number(c):c;
+async function word2excel(file){
+  const bl=await readDocx(file),tabs=bl.filter(b=>b.type==='tbl'),wb=XLSX.utils.book_new();
+  if(tabs.length)tabs.forEach((t,i)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(t.rows.map(r=>r.map(toVal))),'Table '+(i+1)));
+  else{
+    const rows=bl.filter(b=>b.text.trim()).map(b=>[b.text.replace(/\f/g,'')]);
+    if(!rows.length)throw new Error('No tables or text found in this Word file.');
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'Text');
+  }
+  return {blob:new Blob([XLSX.write(wb,{bookType:'xlsx',type:'array'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),ext:'.xlsx'};
+}
+async function excel2word(file){
+  const wb=XLSX.read(await file.arrayBuffer(),{type:'array'}),blocks=[];
+  for(const name of wb.SheetNames){
+    let rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:false,defval:''}).map(r=>r.map(String)).filter(r=>r.some(c=>c.trim()));
+    if(!rows.length)continue;
+    const cols=Math.max(...rows.map(r=>{let k=r.length;while(k>0&&!r[k-1].trim())k--;return k;}));
+    rows=rows.map(r=>r.slice(0,cols));
+    if(wb.SheetNames.length>1)blocks.push(para({text:name,size:14,head:true}));
+    blocks.push(tbl(rows));
+  }
+  if(!blocks.length)throw new Error('This spreadsheet has no data.');
+  return {blob:await packDocx(blocks),ext:'.docx'};
+}
+async function word2jpg(file,status){
+  const bl=await readDocx(file),S=2,PW=794*S,PH=1123*S,M=72*S,CW=PW-2*M,pages=[];
+  let cv,cx,y,cs={};
+  const FF='"Segoe UI",Arial,"Noto Sans Arabic","Noto Nastaliq Urdu",sans-serif';
+  const setF=()=>{cx.font=(cs.bold?'bold ':'')+Math.round(cs.size*96/72*S)+'px '+FF;cx.fillStyle='#000';cx.textBaseline='top';cx.direction=cs.rtl?'rtl':'ltr';cx.textAlign=cs.rtl?'right':'left';};
+  const np=()=>{cv=newCanvas(PW,PH);cx=cv.getContext('2d');cx.fillStyle='#fff';cx.fillRect(0,0,PW,PH);pages.push(cv);y=M;setF();};
+  const wrap=(text,w)=>{const out=[];for(const ln of text.replace(/\t/g,'    ').split('\n')){let line='';for(const wd of ln.split(/(\s+)/)){const t=line+wd;if(cx.measureText(t).width>w&&line.trim()){out.push(line.trimEnd());line=wd.trimStart();}else line=t;}out.push(line.trimEnd());}return out;};
+  cs={size:11};np();
+  for(const [bi,b] of bl.entries()){
+    if(bi%20===0)status('Rendering…',bi/bl.length);
+    if(b.type==='p'){
+      b.text.split('\f').forEach((t,i)=>{
+        if((i>0||b.pb)&&y>M)np();
+        cs={size:b.size,bold:b.bold,rtl:b.rtl};setF();
+        const lh=b.size*96/72*S*1.35,x=b.rtl?PW-M:M;
+        for(const ln of wrap(t,CW)){if(y+lh>PH-M){np();setF();}cx.fillText(ln,x,y);y+=lh;}
+        y+=lh*.35;
+      });
+    }else{
+      const n=Math.max(...b.rows.map(r=>r.length)),cw=CW/n,pad=6*S;
+      cs={size:n>8?8:10};setF();const lh=cs.size*96/72*S*1.35;
+      for(const row of b.rows){
+        const cells=Array.from({length:n},(_,i)=>wrap(row[i]||'',cw-2*pad));
+        const rh=Math.max(...cells.map(c=>c.length))*lh+2*pad;
+        if(y+rh>PH-M&&y>M){np();cs={size:n>8?8:10};setF();}
+        cells.forEach((c,i)=>{cx.strokeStyle='#808080';cx.lineWidth=S;cx.strokeRect(M+i*cw,y,cw,rh);c.forEach((ln,k)=>cx.fillText(ln,M+i*cw+pad,y+pad+k*lh));});
+        y+=rh;
+      }
+      y+=lh*.6;
+    }
+  }
+  const imgs=[];for(const c of pages)imgs.push(await canvasBlob(c,'image/jpeg',.92));
+  return packImgs(imgs,'jpg',baseName(file.name));
+}
 
-/* ---------- UI ---------- */
+/* ---------- tools & UI ---------- */
+const isPdf=f=>/\.pdf$/i.test(f.name)||f.type==='application/pdf';
+const isDocx=f=>/\.docx$/i.test(f.name);
+const isXls=f=>/\.(xlsx|xlsm|xls|csv)$/i.test(f.name);
+const isImg=f=>/^image\//.test(f.type)||/\.(jpe?g|png|webp|bmp)$/i.test(f.name);
+const TOOLS={
+  'pdf-word':{label:'PDF → Word',sub:'text, tables, scans',from:'PDF',acc:'application/pdf,.pdf',ok:isPdf,fn:pdf2word,ocr:1,note:'Text and tables are kept. Scanned pages are read with OCR (no tables in scans).'},
+  'word-excel':{label:'Word → Excel',sub:'tables to sheets',from:'Word (.docx)',acc:'.docx',ok:isDocx,fn:word2excel,note:'Each Word table becomes its own sheet. If there are no tables, the text goes in one sheet.'},
+  'excel-word':{label:'Excel → Word',sub:'sheets to tables',from:'Excel / CSV',acc:'.xlsx,.xlsm,.xls,.csv',ok:isXls,fn:excel2word,note:'Each sheet becomes a table in the Word file.'},
+  'img-word':{label:'Image → Word',sub:'PNG / JPG with OCR',from:'image (PNG, JPG, WebP)',acc:'image/*',ok:isImg,fn:img2word,ocr:1,note:'Text in the picture is read with OCR and put into an editable Word file.'},
+  'pdf-png':{label:'PDF → PNG',sub:'one image per page',from:'PDF',acc:'application/pdf,.pdf',ok:isPdf,fn:pdf2png,note:'Several pages are delivered as a zip of PNG images.'},
+  'word-jpg':{label:'Word → JPEG',sub:'one image per page',from:'Word (.docx)',acc:'.docx',ok:isDocx,fn:word2jpg,note:'Simplified preview: text, headings and tables are drawn. Pictures and complex layouts are not.'}
+};
+let cur='pdf-word',jobs=[],busy=false;
 const kb=n=>n>1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';
-const baseName=n=>n.replace(/\.[^.]+$/,'');
+function setTool(id){
+  if(busy)return;
+  jobs.forEach(j=>j.url&&URL.revokeObjectURL(j.url));jobs=[];cur=id;const t=TOOLS[id];
+  $('pick').accept=t.acc;$('dtitle').textContent='Drop '+t.from+' files here';
+  $('dsub').textContent='or tap to choose files';$('note').textContent=t.note;
+  $('langwrap').style.display=t.ocr?'flex':'none';$('warn').style.display='none';
+  document.querySelectorAll('#tools button').forEach(b=>b.classList.toggle('on',b.dataset.id===id));
+  render();
+}
 function add(files){
-  for(const f of files){const k=kindOf(f);if(k)jobs.push({file:f,kind:k,state:'queued',msg:'Ready',blob:null,url:null});}
+  const t=TOOLS[cur];let skipped=0;
+  for(const f of files){if(t.ok(f))jobs.push({file:f,tool:cur,state:'queued',msg:'Ready',blob:null,url:null,ext:''});else skipped++;}
+  const w=$('warn');w.style.display=skipped?'block':'none';
+  if(skipped)w.textContent=skipped+' file(s) skipped: this tool only accepts '+t.from+' files.';
   render();
 }
 function render(){
@@ -183,15 +339,15 @@ function render(){
     const s=document.createElement('small');s.textContent=kb(j.file.size);n.appendChild(s);
     const st=document.createElement('span');st.className='st '+(j.state==='done'?'ok':j.state==='error'?'err':j.state==='run'?'run':'');st.textContent=j.msg;
     li.append(n,st);
-    if(j.url){const a=document.createElement('a');a.href=j.url;a.download=baseName(j.file.name)+'.docx';a.textContent='Download';li.appendChild(a);}
+    if(j.url){const a=document.createElement('a');a.href=j.url;a.download=baseName(j.file.name)+j.ext;a.textContent='Download';li.appendChild(a);}
     ul.appendChild(li);
   }
   const done=jobs.filter(j=>j.blob).length;
   $('go').disabled=busy||!jobs.some(j=>j.state==='queued'||j.state==='error');
   $('zip').disabled=busy||!done;
-  $('zip').textContent=done===1?'Download Word file':'Download all (.zip)';
-  $('clr').disabled=busy||!jobs.length;
-  $('lang').disabled=busy;
+  $('zip').textContent=done===1?'Download file':'Download all (.zip)';
+  $('clr').disabled=busy||!jobs.length;$('lang').disabled=busy;
+  document.querySelectorAll('#tools button').forEach(b=>b.disabled=busy);
 }
 async function run(){
   busy=true;const prog=$('prog');prog.style.display='block';
@@ -199,8 +355,8 @@ async function run(){
   for(let k=0;k<todo.length;k++){
     const j=todo[k];j.state='run';j.msg='Converting…';render();
     try{
-      j.blob=await converters[j.kind+'>docx'](j.file,(msg,f)=>{j.msg=msg;if(f!==undefined)prog.firstElementChild.style.width=((k+f)/todo.length*100)+'%';render();});
-      j.url=URL.createObjectURL(j.blob);j.state='done';j.msg='Done ✓';
+      const r=await TOOLS[j.tool].fn(j.file,(msg,f)=>{j.msg=msg;if(f!==undefined)prog.firstElementChild.style.width=((k+f)/todo.length*100)+'%';render();});
+      j.blob=r.blob;j.ext=r.ext;j.url=URL.createObjectURL(r.blob);j.state='done';j.msg='Done ✓';
     }catch(e){j.state='error';j.msg=(e&&e.message)||'Conversion failed';}
     render();
   }
@@ -210,27 +366,28 @@ async function run(){
 function save(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);}
 async function downloadAll(){
   const ok=jobs.filter(j=>j.blob);
-  if(ok.length===1)return save(ok[0].blob,baseName(ok[0].file.name)+'.docx');
+  if(ok.length===1)return save(ok[0].blob,baseName(ok[0].file.name)+ok[0].ext);
   const z=new JSZip(),used={};
-  for(const j of ok){const b=baseName(j.file.name);used[b]=(used[b]||0)+1;z.file((used[b]>1?`${b} (${used[b]})`:b)+'.docx',j.blob);}
-  save(await z.generateAsync({type:'blob'}),'converted-word-files.zip');
+  for(const j of ok){const b=baseName(j.file.name),k=b+j.ext;used[k]=(used[k]||0)+1;z.file(used[k]>1?b+' ('+used[k]+')'+j.ext:k,j.blob);}
+  save(await z.generateAsync({type:'blob'}),'modo-converted-files.zip');
 }
+const tb=$('tools');
+for(const [id,t] of Object.entries(TOOLS)){const b=document.createElement('button');b.dataset.id=id;b.innerHTML=t.label+'<small>'+t.sub+'</small>';b.onclick=()=>setTool(id);tb.appendChild(b);}
 const drop=$('drop'),pick=$('pick');
 pick.onchange=()=>{add([...pick.files]);pick.value='';};
 ['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('over');}));
 ['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('over');}));
 drop.addEventListener('drop',e=>add([...e.dataTransfer.files]));
 $('go').onclick=run;$('zip').onclick=downloadAll;
-$('clr').onclick=()=>{jobs.forEach(j=>j.url&&URL.revokeObjectURL(j.url));jobs=[];render();};
-render();
+$('clr').onclick=()=>{jobs.forEach(j=>j.url&&URL.revokeObjectURL(j.url));jobs=[];$('warn').style.display='none';render();};
+setTool('pdf-word');
 window.addEventListener('load',()=>{
   const miss=[];
-  if(!window.pdfjsLib)miss.push('PDF reader (pdf.js)');
-  if(!window.JSZip)miss.push('zip maker (JSZip)');
+  if(!window.pdfjsLib)miss.push('PDF reader');
+  if(!window.JSZip)miss.push('zip tool');
+  if(!window.XLSX)miss.push('Excel tool');
   if(miss.length){const w=$('warn');w.style.display='block';w.textContent='Couldn’t load: '+miss.join(', ')+'. Check your internet connection and reload the page.';}
 });
 </script>
 </body>
 </html>
-
-
